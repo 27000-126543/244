@@ -6,49 +6,53 @@ import { authMiddleware } from '../middleware/auth.js';
 const router = express.Router();
 
 router.get('/stats', authMiddleware, (req, res) => {
-  const allReferrals = db.prepare('SELECT * FROM referrals').all();
-  const allConsultations = db.prepare('SELECT * FROM consultations').all();
-  const allExaminations = db.prepare('SELECT * FROM examinations').all();
-  const allPrescriptions = db.prepare('SELECT * FROM prescriptions').all();
-  const allHospitals = db.prepare('SELECT * FROM hospitals').all();
-  const allDrugs = db.prepare('SELECT * FROM drugs').all();
+  const stats = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM referrals) as total_referrals,
+      (SELECT COUNT(*) FROM consultations) as total_consultations,
+      (SELECT COUNT(*) FROM examinations) as total_examinations,
+      (SELECT COUNT(*) FROM prescriptions) as total_prescriptions,
+      (SELECT SUM(total_beds) FROM hospitals) as total_beds,
+      (SELECT SUM(available_beds) FROM hospitals) as available_beds,
+      (SELECT COUNT(*) FROM referrals WHERE status IN ('pending', 'approving')) as pending_referrals,
+      (SELECT COUNT(*) FROM consultations WHERE DATE(scheduled_at) = DATE('now', 'localtime')) as today_consultations,
+      (SELECT COUNT(*) FROM drugs WHERE stock <= min_stock) as low_stock_drugs
+  `).get();
 
-  const totalBeds = allHospitals.reduce((sum, h) => sum + (h.total_beds || 0), 0);
-  const availableBeds = allHospitals.reduce((sum, h) => sum + (h.available_beds || 0), 0);
-  const bedOccupancyRate = totalBeds ? Math.round(((totalBeds - availableBeds) / totalBeds) * 100) : 0;
+  const bedOccupancyRate = stats.total_beds 
+    ? Math.round(((stats.total_beds - stats.available_beds) / stats.total_beds) * 100) 
+    : 0;
 
-  const duplicateExams = allExaminations.filter(e => e.is_duplicate === 1).length;
-  const mutualRecognitionRate = allExaminations.length > 0
-    ? Math.round(((allExaminations.length - duplicateExams) / allExaminations.length) * 100)
+  const examStats = db.prepare(`
+    SELECT 
+      COUNT(*) as total,
+      SUM(CASE WHEN is_duplicate = 1 THEN 1 ELSE 0 END) as duplicate
+    FROM examinations
+  `).get();
+
+  const mutualRecognitionRate = examStats.total > 0
+    ? Math.round(((examStats.total - examStats.duplicate) / examStats.total) * 100)
     : 100;
 
-  const lowStockDrugs = allDrugs.filter(d => d.stock <= d.min_stock).length;
-  const stockTurnoverRate = allDrugs.length > 0
-    ? Math.round(((allDrugs.length - lowStockDrugs) / allDrugs.length) * 100)
+  const drugStats = db.prepare('SELECT COUNT(*) as total FROM drugs').get();
+  const stockTurnoverRate = drugStats.total > 0
+    ? Math.round(((drugStats.total - stats.low_stock_drugs) / drugStats.total) * 100)
     : 100;
-
-  const pendingReferrals = allReferrals.filter(r => r.status === 'pending' || r.status === 'approving').length;
-  
-  const today = new Date().toISOString().split('T')[0];
-  const todayConsultations = allConsultations.filter(c => {
-    const scheduledDate = c.scheduled_at ? c.scheduled_at.split(' ')[0] : '';
-    return scheduledDate === today;
-  }).length;
 
   res.json({
     data: {
-      total_referrals: allReferrals.length,
-      total_consultations: allConsultations.length,
-      total_examinations: allExaminations.length,
-      total_prescriptions: allPrescriptions.length,
+      total_referrals: stats.total_referrals,
+      total_consultations: stats.total_consultations,
+      total_examinations: examStats.total,
+      total_prescriptions: stats.total_prescriptions,
       bed_occupancy_rate: bedOccupancyRate,
       mutual_recognition_rate: mutualRecognitionRate,
       stock_turnover_rate: stockTurnoverRate,
-      pending_referrals: pendingReferrals,
-      today_consultations: todayConsultations,
-      total_beds: totalBeds,
-      available_beds: availableBeds,
-      low_stock_drugs: lowStockDrugs
+      pending_referrals: stats.pending_referrals,
+      today_consultations: stats.today_consultations,
+      total_beds: stats.total_beds,
+      available_beds: stats.available_beds,
+      low_stock_drugs: stats.low_stock_drugs
     }
   });
 });
@@ -71,46 +75,39 @@ router.get('/referral-trend', authMiddleware, (req, res) => {
 });
 
 router.get('/hospital-stats', authMiddleware, (req, res) => {
-  const allHospitals = db.prepare('SELECT * FROM hospitals').all();
-  const allReferrals = db.prepare('SELECT * FROM referrals').all();
-  const allConsultations = db.prepare('SELECT * FROM consultations').all();
+  const hospitals = db.prepare(`
+    SELECT 
+      h.id,
+      h.name,
+      h.level,
+      h.total_beds,
+      h.available_beds,
+      (SELECT COUNT(*) FROM referrals r WHERE r.from_hospital_id = h.id) as referral_out_count,
+      (SELECT COUNT(*) FROM referrals r WHERE r.to_hospital_id = h.id) as referral_in_count,
+      (SELECT COUNT(*) FROM consultations c WHERE c.hospital_id = h.id) as consultation_count
+    FROM hospitals h
+    ORDER BY h.name
+  `).all();
 
-  const hospitals = allHospitals.map(h => {
-    const referral_out_count = allReferrals.filter(r => r.from_hospital_id === h.id).length;
-    const referral_in_count = allReferrals.filter(r => r.to_hospital_id === h.id).length;
-    const consultation_count = allConsultations.filter(c => c.hospital_id === h.id).length;
-    
-    return {
-      id: h.id,
-      name: h.name,
-      level: h.level,
-      total_beds: h.total_beds,
-      available_beds: h.available_beds,
-      referral_out_count,
-      referral_in_count,
-      consultation_count,
-      bed_occupancy_rate: h.total_beds ? Math.round(((h.total_beds - h.available_beds) / h.total_beds) * 100) : 0
-    };
-  });
+  const result = hospitals.map(h => ({
+    ...h,
+    bed_occupancy_rate: h.total_beds ? Math.round(((h.total_beds - h.available_beds) / h.total_beds) * 100) : 0
+  }));
 
-  hospitals.sort((a, b) => a.name.localeCompare(b.name));
-  res.json({ data: hospitals });
+  res.json({ data: result });
 });
 
 router.get('/disease-type-distribution', authMiddleware, (req, res) => {
-  const allReferrals = db.prepare('SELECT * FROM referrals').all();
-  
-  const diseaseMap = new Map();
-  allReferrals.forEach(r => {
-    if (r.disease_type) {
-      diseaseMap.set(r.disease_type, (diseaseMap.get(r.disease_type) || 0) + 1);
-    }
-  });
-  
-  const distribution = Array.from(diseaseMap.entries())
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 8);
+  const distribution = db.prepare(`
+    SELECT 
+      disease_type as name,
+      COUNT(*) as value
+    FROM referrals
+    WHERE disease_type IS NOT NULL AND disease_type != ''
+    GROUP BY disease_type
+    ORDER BY value DESC
+    LIMIT 8
+  `).all();
 
   res.json({ data: distribution });
 });
@@ -118,41 +115,76 @@ router.get('/disease-type-distribution', authMiddleware, (req, res) => {
 router.get('/recent-activities', authMiddleware, (req, res) => {
   const limit = req.query.limit || 10;
 
-  const referrals = db.prepare(`
-    SELECT 
-      id,
-      'referral' as type,
-      patient_name as title,
-      status,
-      created_at,
-      from_hospital_name as hospital
-    FROM referrals
+  const activities = db.prepare(`
+    SELECT id, type, title, status, created_at, hospital
+    FROM (
+      SELECT 
+        id,
+        'referral' as type,
+        patient_name as title,
+        status,
+        created_at,
+        from_hospital_name as hospital
+      FROM referrals
+      UNION ALL
+      SELECT 
+        id,
+        'consultation' as type,
+        title,
+        status,
+        created_at,
+        hospital_name as hospital
+      FROM consultations
+    )
     ORDER BY created_at DESC
     LIMIT ?
   `).all(limit);
 
-  const consultations = db.prepare(`
-    SELECT 
-      id,
-      'consultation' as type,
-      title,
-      status,
-      created_at,
-      hospital_name as hospital
-    FROM consultations
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).all(limit);
-
-  const all = [...referrals, ...consultations]
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-    .slice(0, limit);
-
-  res.json({ data: all });
+  res.json({ data: activities });
 });
 
 router.get('/reports', authMiddleware, (req, res) => {
   const { hospital_id, start_date, end_date } = req.query;
+
+  let referralWhere = 'WHERE 1=1';
+  let consultWhere = 'WHERE 1=1';
+  let examWhere = 'WHERE 1=1';
+  let settleWhere = 'WHERE 1=1';
+  const params = [];
+
+  if (hospital_id) {
+    referralWhere += ' AND (from_hospital_id = ? OR to_hospital_id = ?)';
+    params.push(hospital_id, hospital_id);
+    consultWhere += ' AND hospital_id = ?';
+    params.push(hospital_id);
+    examWhere += ' AND hospital_id = ?';
+    params.push(hospital_id);
+    settleWhere += ' AND (from_hospital_id = ? OR to_hospital_id = ?)';
+    params.push(hospital_id, hospital_id);
+  }
+
+  if (start_date) {
+    referralWhere += ' AND DATE(created_at) >= ?';
+    params.push(start_date);
+    consultWhere += ' AND DATE(created_at) >= ?';
+    params.push(start_date);
+    examWhere += ' AND DATE(examination_date) >= ?';
+    params.push(start_date);
+    settleWhere += ' AND DATE(settlement_date) >= ?';
+    params.push(start_date);
+  }
+
+  if (end_date) {
+    referralWhere += ' AND DATE(created_at) <= ?';
+    params.push(start_date ? params[params.length - 1] : undefined);
+    params.push(end_date);
+    consultWhere += ' AND DATE(created_at) <= ?';
+    params.push(end_date);
+    examWhere += ' AND DATE(examination_date) <= ?';
+    params.push(end_date);
+    settleWhere += ' AND DATE(settlement_date) <= ?';
+    params.push(end_date);
+  }
 
   const referralStats = db.prepare(`
     SELECT 
@@ -160,16 +192,8 @@ router.get('/reports', authMiddleware, (req, res) => {
       SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
       SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
       SUM(CASE WHEN status IN ('pending', 'approving') THEN 1 ELSE 0 END) as pending
-    FROM referrals
-    WHERE 1=1
-    ${hospital_id ? 'AND (from_hospital_id = ? OR to_hospital_id = ?)' : ''}
-    ${start_date ? 'AND DATE(created_at) >= ?' : ''}
-    ${end_date ? 'AND DATE(created_at) <= ?' : ''}
-  `).get(
-    ...(hospital_id ? [hospital_id, hospital_id] : []),
-    ...(start_date ? [start_date] : []),
-    ...(end_date ? [end_date] : [])
-  );
+    FROM referrals ${referralWhere}
+  `).get(...params.slice(0, 4));
 
   const consultationStats = db.prepare(`
     SELECT 
@@ -177,32 +201,16 @@ router.get('/reports', authMiddleware, (req, res) => {
       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
       SUM(CASE WHEN status = 'ongoing' THEN 1 ELSE 0 END) as ongoing,
       SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END) as scheduled
-    FROM consultations
-    WHERE 1=1
-    ${hospital_id ? 'AND hospital_id = ?' : ''}
-    ${start_date ? 'AND DATE(created_at) >= ?' : ''}
-    ${end_date ? 'AND DATE(created_at) <= ?' : ''}
-  `).get(
-    ...(hospital_id ? [hospital_id] : []),
-    ...(start_date ? [start_date] : []),
-    ...(end_date ? [end_date] : [])
-  );
+    FROM consultations ${consultWhere}
+  `).get(...params.slice(2, 4));
 
   const examStats = db.prepare(`
     SELECT 
       COUNT(*) as total,
       SUM(CASE WHEN is_duplicate = 1 THEN 1 ELSE 0 END) as duplicate,
       SUM(CASE WHEN is_mutual_recognition = 1 THEN 1 ELSE 0 END) as mutual_recognition
-    FROM examinations
-    WHERE 1=1
-    ${hospital_id ? 'AND hospital_id = ?' : ''}
-    ${start_date ? 'AND DATE(examination_date) >= ?' : ''}
-    ${end_date ? 'AND DATE(examination_date) <= ?' : ''}
-  `).get(
-    ...(hospital_id ? [hospital_id] : []),
-    ...(start_date ? [start_date] : []),
-    ...(end_date ? [end_date] : [])
-  );
+    FROM examinations ${examWhere}
+  `).get(...params.slice(2, 4));
 
   const settlementStats = db.prepare(`
     SELECT 
@@ -210,16 +218,8 @@ router.get('/reports', authMiddleware, (req, res) => {
       SUM(total_amount) as total_amount,
       SUM(insurance_amount) as insurance_amount,
       SUM(patient_pay_amount) as patient_pay_amount
-    FROM settlements
-    WHERE 1=1
-    ${hospital_id ? 'AND (from_hospital_id = ? OR to_hospital_id = ?)' : ''}
-    ${start_date ? 'AND DATE(settlement_date) >= ?' : ''}
-    ${end_date ? 'AND DATE(settlement_date) <= ?' : ''}
-  `).get(
-    ...(hospital_id ? [hospital_id, hospital_id] : []),
-    ...(start_date ? [start_date] : []),
-    ...(end_date ? [end_date] : [])
-  );
+    FROM settlements ${settleWhere}
+  `).get(...params.slice(0, 4));
 
   res.json({
     data: {

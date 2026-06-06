@@ -1,7 +1,7 @@
-import { create } from "zustand";
-import { api } from "@/utils/request";
+import { create } from 'zustand';
+import { api } from '@/utils/request';
 
-interface DashboardStats {
+export interface DashboardStats {
   total_referrals: number;
   total_consultations: number;
   total_examinations: number;
@@ -16,12 +16,12 @@ interface DashboardStats {
   low_stock_drugs: number;
 }
 
-interface TrendItem {
+export interface TrendItem {
   date: string;
   count: number;
 }
 
-interface HospitalStat {
+export interface HospitalStat {
   id: string;
   name: string;
   level: string;
@@ -33,12 +33,12 @@ interface HospitalStat {
   bed_occupancy_rate: number;
 }
 
-interface DiseaseItem {
+export interface DiseaseItem {
   name: string;
   value: number;
 }
 
-interface ActivityItem {
+export interface ActivityItem {
   id: string;
   type: string;
   title: string;
@@ -54,10 +54,10 @@ interface DashboardState {
   diseaseDistribution: DiseaseItem[];
   recentActivities: ActivityItem[];
   loading: boolean;
+  isLoading: boolean;
   error: string | null;
   autoRefreshInterval: number | null;
   lastUpdate: Date | null;
-  isLoading: boolean;
   fetchAllData: () => Promise<void>;
   fetchStats: () => Promise<void>;
   fetchTrend: (days?: number) => Promise<void>;
@@ -93,37 +93,33 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       ]);
 
       set({
-        stats: statsRes.data,
-        trend: trendRes.data,
-        hospitalStats: hospitalRes.data,
-        diseaseDistribution: diseaseRes.data,
-        recentActivities: activityRes.data,
+        stats: statsRes.data || null,
+        trend: trendRes.data || [],
+        hospitalStats: hospitalRes.data || [],
+        diseaseDistribution: diseaseRes.data || [],
+        recentActivities: activityRes.data || [],
         loading: false,
         isLoading: false,
         lastUpdate: new Date(),
       });
     } catch (error: any) {
-      set({ error: error.message || "数据加载失败", loading: false, isLoading: false });
+      set({ error: error.message || '数据加载失败', loading: false, isLoading: false });
     }
   },
 
   fetchStats: async () => {
     try {
       const res: any = await api.dashboard.getStats();
-      set({ stats: res.data, lastUpdate: new Date() });
+      set({ stats: res.data || null, lastUpdate: new Date() });
     } catch (error: any) {
       set({ error: error.message });
     }
   },
 
-  refreshStats: async () => {
-    await get().fetchStats();
-  },
-
   fetchTrend: async (days = 7) => {
     try {
       const res: any = await api.dashboard.getReferralTrend(days);
-      set({ trend: res.data });
+      set({ trend: res.data || [] });
     } catch (error: any) {
       set({ error: error.message });
     }
@@ -132,7 +128,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   fetchHospitalStats: async () => {
     try {
       const res: any = await api.dashboard.getHospitalStats();
-      set({ hospitalStats: res.data });
+      set({ hospitalStats: res.data || [] });
     } catch (error: any) {
       set({ error: error.message });
     }
@@ -141,7 +137,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   fetchDiseaseDistribution: async () => {
     try {
       const res: any = await api.dashboard.getDiseaseDistribution();
-      set({ diseaseDistribution: res.data });
+      set({ diseaseDistribution: res.data || [] });
     } catch (error: any) {
       set({ error: error.message });
     }
@@ -150,24 +146,18 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   fetchRecentActivities: async (limit = 10) => {
     try {
       const res: any = await api.dashboard.getRecentActivities(limit);
-      set({ recentActivities: res.data });
+      set({ recentActivities: res.data || [] });
     } catch (error: any) {
       set({ error: error.message });
     }
   },
 
   startAutoRefresh: (interval = 5000) => {
-    const { autoRefreshInterval } = get();
-    if (autoRefreshInterval) {
-      clearInterval(autoRefreshInterval);
-    }
-
-    const timer = window.setInterval(() => {
+    get().stopAutoRefresh();
+    const refreshInterval = window.setInterval(() => {
       get().fetchStats();
-      get().fetchRecentActivities(10);
     }, interval);
-
-    set({ autoRefreshInterval: timer });
+    set({ autoRefreshInterval: refreshInterval });
   },
 
   stopAutoRefresh: () => {
@@ -176,5 +166,9 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       clearInterval(autoRefreshInterval);
       set({ autoRefreshInterval: null });
     }
+  },
+
+  refreshStats: async () => {
+    await get().fetchStats();
   },
 }));
