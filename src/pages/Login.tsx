@@ -1,41 +1,41 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { User, Lock, LogIn, Hospital, ShieldCheck } from "lucide-react";
+import { User, Lock, LogIn, Hospital, ShieldCheck, Info } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
-import type { UserRole } from "@/types";
-import { roleLabels } from "@/types";
 import { cn } from "@/utils/format";
 
-const roleOptions: { value: UserRole; label: string; desc: string }[] = [
-  { value: "grassroots_doctor", label: "基层医生", desc: "社区卫生服务中心医生" },
-  { value: "senior_doctor", label: "上级医生", desc: "上级医院专科医生" },
-  { value: "department_director", label: "科室主任", desc: "科室管理与审批" },
-  { value: "medical_affairs", label: "医务科", desc: "三级审批与监督" },
-  { value: "admin", label: "管委会管理员", desc: "系统全局管理" },
-];
-
 export function Login() {
-  const [username, setUsername] = useState("");
-  const [selectedRole, setSelectedRole] = useState<UserRole>("grassroots_doctor");
+  const [username, setUsername] = useState("grassroots1");
+  const [password, setPassword] = useState("123456");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuthStore();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setLoading(true);
 
     if (!username.trim()) {
       setError("请输入用户名");
+      setLoading(false);
       return;
     }
 
-    const success = login(username, selectedRole);
+    if (!password.trim()) {
+      setError("请输入密码");
+      setLoading(false);
+      return;
+    }
+
+    const success = await login(username.trim(), password);
     if (success) {
       navigate("/dashboard");
     } else {
-      setError("登录失败，请重试");
+      setError("用户名或密码错误，请重试");
     }
+    setLoading(false);
   };
 
   return (
@@ -92,45 +92,9 @@ export function Login() {
           </div>
 
           <h2 className="text-2xl font-bold text-gray-800 mb-2">欢迎登录</h2>
-          <p className="text-gray-500 mb-8">请选择角色并输入用户名登录系统</p>
+          <p className="text-gray-500 mb-6">请输入用户名和密码登录系统</p>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-3">选择角色</label>
-              <div className="grid gap-2">
-                {roleOptions.map((role) => (
-                  <button
-                    key={role.value}
-                    type="button"
-                    onClick={() => setSelectedRole(role.value)}
-                    className={cn(
-                      "p-3 rounded-xl border-2 text-left transition-all duration-200",
-                      selectedRole === role.value
-                        ? "border-primary-500 bg-primary-50"
-                        : "border-gray-200 hover:border-primary-200 hover:bg-gray-50"
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={cn(
-                          "w-5 h-5 rounded-full border-2 flex items-center justify-center",
-                          selectedRole === role.value ? "border-primary-500" : "border-gray-300"
-                        )}
-                      >
-                        {selectedRole === role.value && (
-                          <div className="w-2.5 h-2.5 bg-primary-500 rounded-full" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-800">{role.label}</p>
-                        <p className="text-xs text-gray-500">{role.desc}</p>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">用户名</label>
               <div className="relative">
@@ -139,7 +103,7 @@ export function Login() {
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="请输入您的姓名"
+                  placeholder="请输入用户名"
                   className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 transition-all"
                 />
               </div>
@@ -151,11 +115,25 @@ export function Login() {
                 <Lock className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   type="password"
-                  value="********"
-                  disabled
-                  className="w-full pl-10 pr-4 py-3 bg-gray-100 border border-gray-200 rounded-xl text-gray-500 cursor-not-allowed"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="请输入密码"
+                  className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400 transition-all"
                 />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">演示模式</span>
+              </div>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+              <div className="flex items-start gap-2">
+                <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-blue-700">
+                  <p className="font-medium mb-1">测试账号：</p>
+                  <p>基层医生: grassroots1 / 123456</p>
+                  <p>上级医生: senior1 / 123456</p>
+                  <p>科室主任: director1 / 123456</p>
+                  <p>医务科: medical1 / 123456</p>
+                  <p>管理员: admin / 123456</p>
+                </div>
               </div>
             </div>
 
@@ -163,16 +141,13 @@ export function Login() {
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white font-medium rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-primary-500/30 hover:shadow-xl hover:shadow-primary-500/40 hover:-translate-y-0.5"
+              disabled={loading}
+              className="w-full py-3.5 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-primary-500/30 hover:shadow-xl hover:shadow-primary-500/40 hover:-translate-y-0.5 disabled:hover:translate-y-0"
             >
               <LogIn className="w-5 h-5" />
-              登录系统
+              {loading ? "登录中..." : "登录系统"}
             </button>
           </form>
-
-          <p className="text-center text-sm text-gray-400 mt-8">
-            当前角色: <span className="text-primary-600 font-medium">{roleLabels[selectedRole]}</span>
-          </p>
         </div>
       </div>
     </div>
